@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+opencv-python
+deepface
+librosa
+numpy
+requests
+openai
+speechrecognition
+pydantic
+python-multipart
+aiortc
+av
