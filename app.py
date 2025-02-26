@@ -1,4 +1,3 @@
-
 import os
 import cv2
 import numpy as np
@@ -7,8 +6,8 @@ import requests
 import json
 import speech_recognition as sr
 from fastapi import FastAPI, WebSocket
-from fer import FER
 import base64
+from deepface import DeepFace
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
 import av
 import asyncio
@@ -17,14 +16,9 @@ app = FastAPI()
 pcs = set()
 recognizer = sr.Recognizer()
 
-detector = FER()
-
 DID_API_KEY = "bml5YXRpc2hhcm1hMzAxMUBnbWFpbC5jb20:mVw8viI7BxfSiB3D2Xx_w"
 DID_URL = "https://api.d-id.com/talks"
 OPENAI_API_KEY = "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"
-
-
-
 
 
 @app.websocket("/emotion")
@@ -35,8 +29,9 @@ async def emotion_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             jpg_as_np = np.frombuffer(base64.b64decode(data), dtype=np.uint8)
             frame = cv2.imdecode(jpg_as_np, cv2.IMREAD_COLOR)
-            emotions = detector.detect_emotions(frame)
-            await websocket.send_json(emotions)
+            result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
+            emotions = result[0]["dominant_emotion"] if result else "unknown"
+            await websocket.send_json({"emotion": emotions})
         except Exception as e:
             print(e)
             break
@@ -131,5 +126,5 @@ async def analyze_emotion():
     cap.release()
     if not ret:
         return {"error": "Could not capture frame"}
-    result = detector.detect_emotions(frame)
-    return {"emotion": result[0]['dominant_emotion']} if result else {"emotion": "unknown"}
+    result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
+    return {"emotion": result[0]["dominant_emotion"]} if result else {"emotion": "unknown"}
