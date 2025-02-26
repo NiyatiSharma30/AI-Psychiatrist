@@ -128,3 +128,9 @@ async def analyze_emotion():
         return {"error": "Could not capture frame"}
     result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
     return {"emotion": result[0]["dominant_emotion"]} if result else {"emotion": "unknown"}
+
+@app.get("/")
+async def root():
+    return {"message": "AI Psychiatrist API is running!"}
+
+
