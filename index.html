@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Psychiatrist</title>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
 </head>
 <body>
     <h1>AI Psychiatrist Video Call</h1>
@@ -12,21 +11,41 @@
     <video id="avatarVideo" autoplay playsinline></video>
     <p>Detected Emotion: <span id="emotion">Neutral</span></p>
     <button onclick="startCall()">Start Video Call</button>
-    
+
     <script>
         let ws;
         let localStream;
-        
+
         async function startCall() {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             document.getElementById('localVideo').srcObject = localStream;
-            
-            ws = new WebSocket("ws://localhost:8000/emotion");
-            ws.onmessage = function(event) {
+
+            ws = new WebSocket("wss://ai-psychiatrist.onrender.com/emotion");
+
+            ws.onopen = () => console.log("✅ WebSocket Connected");
+            ws.onerror = (error) => console.error("❌ WebSocket Error:", error);
+            ws.onclose = () => console.log("❌ WebSocket Closed");
+
+            ws.onmessage = async function(event) {
+                console.log("📩 Received Data:", event.data);
                 const data = JSON.parse(event.data);
-                document.getElementById("emotion").innerText = data[0]?.emotions ? Object.keys(data[0].emotions).reduce((a, b) => data[0].emotions[a] > data[0].emotions[b] ? a : b) : "Neutral";
+
+                document.getElementById("emotion").innerText = data.emotion || "Neutral";
+
+                try {
+                    let avatarResponse = await fetch("https://ai-psychiatrist.onrender.com/generate_avatar/", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ emotion: data.emotion || "Neutral" })
+                    });
+
+                    let avatarData = await avatarResponse.json();
+                    playAvatarVideo(avatarData.result_url);
+                } catch (error) {
+                    console.error("❌ Avatar Request Failed:", error);
+                }
             };
-            
+
             setInterval(async () => {
                 const video = document.getElementById("localVideo");
                 const canvas = document.createElement("canvas");
@@ -34,9 +53,17 @@
                 canvas.height = video.videoHeight;
                 const ctx = canvas.getContext("2d");
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const frame = canvas.toDataURL("image/jpeg").split(",")[1];
-                ws.send(frame);
+
+                const frameData = canvas.toDataURL("image/jpeg").split(",")[1];
+                ws.send(frameData);
             }, 1000);
+        }
+
+        async function playAvatarVideo(url) {
+            let video = document.getElementById("avatarVideo");
+            video.src = url;
+            video.load();
+            video.play();
         }
     </script>
 </body>
