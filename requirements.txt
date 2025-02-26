@@ -7,7 +7,5 @@ requests
 speechrecognition
 aiortc
 av
-fer
-moviepy
-imageio
-imageio-ffmpeg
+deepface
+asyncio
