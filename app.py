@@ -125,8 +125,7 @@ async def generate_avatar(emotion: str):
     payload = {
         "script": {"type": "text", "input": ai_response},
         "source_url": "https://myhost.com/image.jpg",
-        "driver_url": "bank://lively/driver-05",  // See Drivers List Tab above for more supported drivers
-    
+        "driver_url": "bank://lively/driver-05",  
 }
 
     try:
