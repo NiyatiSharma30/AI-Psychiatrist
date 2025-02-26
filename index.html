@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Psychiatrist</title>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
+</head>
+<body>
+    <h1>AI Psychiatrist Video Call</h1>
+    <video id="localVideo" autoplay playsinline></video>
+    <video id="avatarVideo" autoplay playsinline></video>
+    <p>Detected Emotion: <span id="emotion">Neutral</span></p>
+    <button onclick="startCall()">Start Video Call</button>
+    
+    <script>
+        let ws;
+        let localStream;
+        
+        async function startCall() {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('localVideo').srcObject = localStream;
+            
+            ws = new WebSocket("ws://localhost:8000/emotion");
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                document.getElementById("emotion").innerText = data[0]?.emotions ? Object.keys(data[0].emotions).reduce((a, b) => data[0].emotions[a] > data[0].emotions[b] ? a : b) : "Neutral";
+            };
+            
+            setInterval(async () => {
+                const video = document.getElementById("localVideo");
+                const canvas = document.createElement("canvas");
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const frame = canvas.toDataURL("image/jpeg").split(",")[1];
+                ws.send(frame);
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
