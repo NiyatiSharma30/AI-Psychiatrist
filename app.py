@@ -5,34 +5,61 @@ import librosa
 import requests
 import json
 import speech_recognition as sr
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import base64
+import asyncio
+import av
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from deepface import DeepFace
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
-import av
-import asyncio
-
-app = FastAPI()
-pcs = set()
-recognizer = sr.Recognizer()
 
 DID_API_KEY = "bml5YXRpc2hhcm1hMzAxMUBnbWFpbC5jb20:mVw8viI7BxfSiB3D2Xx_w"
 DID_URL = "https://api.d-id.com/talks"
 OPENAI_API_KEY = "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"
 
+app = FastAPI()
+pcs = set()
+recognizer = sr.Recognizer()
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Change to specific domains in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def fix_base64_padding(data):
+    """Ensures Base64 string has correct padding."""
+    missing_padding = len(data) % 4
+    if missing_padding:
+        data += "=" * (4 - missing_padding)
+    return data
+
 
 @app.websocket("/emotion")
 async def emotion_endpoint(websocket: WebSocket):
-    """ WebSocket endpoint for real-time emotion detection. """
+    """WebSocket endpoint for real-time emotion detection."""
     await websocket.accept()
     try:
         while True:
             data = await websocket.receive_text()
-            decoded_data = base64.b64decode(data)
+            data = fix_base64_padding(data)
+
+            try:
+                decoded_data = base64.b64decode(data)
+            except Exception as e:
+                print(f"❌ Base64 Decode Error: {e}")
+                await websocket.send_json({"error": "Invalid Base64 data"})
+                continue
+
             jpg_as_np = np.frombuffer(decoded_data, dtype=np.uint8)
             frame = cv2.imdecode(jpg_as_np, cv2.IMREAD_COLOR)
 
-            if frame is None:
+            if frame is None or frame.size == 0:
                 await websocket.send_json({"error": "Invalid image"})
                 continue
 
@@ -54,18 +81,18 @@ async def emotion_endpoint(websocket: WebSocket):
 
 
 class AudioEmotionTrack(AudioStreamTrack):
-    """ Analyzes emotion from audio pitch and energy levels. """
+    """Analyzes emotion from audio pitch and energy levels."""
     def __init__(self, track):
         super().__init__()
         self.track = track
+        self.sr = 44100  # Sample rate
 
     async def recv(self):
         frame = await self.track.recv()
         audio = frame.to_ndarray()
         y = audio.astype(np.float32)
-        sr = 44100  # Sample rate
 
-        pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
+        pitches, magnitudes = librosa.piptrack(y=y, sr=self.sr)
         pitch_values = pitches[pitches > 0]
         avg_pitch = np.mean(pitch_values) if len(pitch_values) > 0 else 0
         energy = np.sum(y ** 2) / len(y)
@@ -75,7 +102,7 @@ class AudioEmotionTrack(AudioStreamTrack):
 
 @app.post("/offer")
 async def offer(offer: dict):
-    """ Handles WebRTC offer and returns an answer. """
+    """Handles WebRTC offer and returns an answer."""
     pc = RTCPeerConnection()
     pcs.add(pc)
 
@@ -94,7 +121,7 @@ async def offer(offer: dict):
 
 
 def generate_ai_response(emotion):
-    """ Uses OpenAI API to generate an AI therapist response based on detected emotion. """
+    """Uses OpenAI API to generate an AI therapist response based on detected emotion."""
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     prompt = f"The user seems {emotion}. Respond with empathy."
 
@@ -118,18 +145,18 @@ def generate_ai_response(emotion):
 
 @app.post("/generate_avatar/")
 async def generate_avatar(emotion: str):
-    """ Generates an avatar video response using D-ID API based on detected emotion. """
+    """Generates an avatar video response using D-ID API based on detected emotion."""
     ai_response = generate_ai_response(emotion)
     headers = {"Authorization": f"Bearer {DID_API_KEY}", "Content-Type": "application/json"}
 
     payload = {
         "script": {"type": "text", "input": ai_response},
         "source_url": "https://myhost.com/image.jpg",
-        "driver_url": "bank://lively/driver-05",  
-}
+        "driver_url": "bank://lively/driver-05",
+    }
 
     try:
-        response = requests.post(DID_URL, headers=headers, json=payload)
+        response = requests.post("https://api.d-id.com/talks", headers=headers, json=payload)
         avatar_data = response.json()
         return {"result_url": avatar_data.get("result_url", "No Video")}
     except Exception as e:
@@ -139,7 +166,7 @@ async def generate_avatar(emotion: str):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """ WebSocket endpoint for real-time emotion and avatar video streaming. """
+    """WebSocket endpoint for real-time emotion and avatar video streaming."""
     await websocket.accept()
     try:
         while True:
@@ -167,7 +194,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/analyze")
 async def analyze_emotion():
-    """ Captures a single frame and analyzes emotion using DeepFace. """
+    """Captures a single frame and analyzes emotion using DeepFace."""
     cap = cv2.VideoCapture(0)
     ret, frame = cap.read()
     cap.release()
@@ -185,5 +212,5 @@ async def analyze_emotion():
 
 @app.get("/")
 async def root():
-    """ Root endpoint for API status check. """
+    """Root endpoint for API status check."""
     return {"message": "AI Psychiatrist API is running!"}
