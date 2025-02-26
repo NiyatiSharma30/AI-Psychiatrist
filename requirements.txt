@@ -11,3 +11,5 @@ deepface
 asyncio
 tensorflow-cpu==2.14.0  # Downgrade to avoid compatibility issues
 tf-keras
+uvicorn[standard]
+websockets
