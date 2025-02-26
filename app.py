@@ -123,7 +123,7 @@ async def generate_avatar(emotion: str):
     headers = {"Authorization": f"Bearer {DID_API_KEY}", "Content-Type": "application/json"}
 
     payload = {
-        "script": {"type": "text", "input": ai_response}
+        "script": {"type": "text", "input": ai_response},
         "source_url": "https://myhost.com/image.jpg",
         "driver_url": "bank://lively/driver-05",  // See Drivers List Tab above for more supported drivers
     
