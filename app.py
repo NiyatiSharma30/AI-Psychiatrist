@@ -5,7 +5,7 @@ import librosa
 import requests
 import json
 import speech_recognition as sr
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import base64
 from deepface import DeepFace
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
@@ -23,20 +23,38 @@ OPENAI_API_KEY = "sk-proj-TkIF_0IgGwQTAjdTrHS6eckuBro6A_Uexqtx4dB2i1h9Vw_kPK6i2v
 
 @app.websocket("/emotion")
 async def emotion_endpoint(websocket: WebSocket):
+    """ WebSocket endpoint for real-time emotion detection. """
     await websocket.accept()
-    while True:
-        try:
+    try:
+        while True:
             data = await websocket.receive_text()
-            jpg_as_np = np.frombuffer(base64.b64decode(data), dtype=np.uint8)
+            decoded_data = base64.b64decode(data)
+            jpg_as_np = np.frombuffer(decoded_data, dtype=np.uint8)
             frame = cv2.imdecode(jpg_as_np, cv2.IMREAD_COLOR)
-            result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
-            emotions = result[0]["dominant_emotion"] if result else "unknown"
-            await websocket.send_json({"emotion": emotions})
-        except Exception as e:
-            print(e)
-            break
+
+            if frame is None:
+                await websocket.send_json({"error": "Invalid image"})
+                continue
+
+            try:
+                result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
+                emotion = result[0]["dominant_emotion"] if result else "unknown"
+            except Exception as e:
+                print(f"❌ DeepFace Error: {e}")
+                emotion = "unknown"
+
+            await websocket.send_json({"emotion": emotion})
+
+    except WebSocketDisconnect:
+        print("❌ WebSocket Disconnected")
+    except Exception as e:
+        print(f"❌ WebSocket Error: {e}")
+    finally:
+        await websocket.close()
+
 
 class AudioEmotionTrack(AudioStreamTrack):
+    """ Analyzes emotion from audio pitch and energy levels. """
     def __init__(self, track):
         super().__init__()
         self.track = track
@@ -45,15 +63,19 @@ class AudioEmotionTrack(AudioStreamTrack):
         frame = await self.track.recv()
         audio = frame.to_ndarray()
         y = audio.astype(np.float32)
-        sr = 44100  
+        sr = 44100  # Sample rate
+
         pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
-        pitch_values = pitches[pitches > 0]  
+        pitch_values = pitches[pitches > 0]
         avg_pitch = np.mean(pitch_values) if len(pitch_values) > 0 else 0
         energy = np.sum(y ** 2) / len(y)
+
         return av.AudioFrame.from_ndarray(audio, layout="mono")
+
 
 @app.post("/offer")
 async def offer(offer: dict):
+    """ Handles WebRTC offer and returns an answer. """
     pc = RTCPeerConnection()
     pcs.add(pc)
 
@@ -70,43 +92,62 @@ async def offer(offer: dict):
 
     return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
 
+
 def generate_ai_response(emotion):
+    """ Uses OpenAI API to generate an AI therapist response based on detected emotion. """
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     prompt = f"The user seems {emotion}. Respond with empathy."
 
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers=headers,
-        json={
-            "model": "gpt-4",
-            "messages": [
-                {"role": "system", "content": "You are a compassionate AI psychiatrist."},
-                {"role": "user", "content": prompt}
-            ]
-        }
-    )
-    return response.json()["choices"][0]["message"]["content"]
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "system", "content": "You are a compassionate AI psychiatrist."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+        )
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"❌ OpenAI API Error: {e}")
+        return "I'm here to help you."
+
 
 @app.post("/generate_avatar/")
 async def generate_avatar(emotion: str):
+    """ Generates an avatar video response using D-ID API based on detected emotion. """
     ai_response = generate_ai_response(emotion)
     headers = {"Authorization": f"Bearer {DID_API_KEY}", "Content-Type": "application/json"}
+
     payload = {
-        "script": {"type": "text", "input": ai_response},
-        "source_url": "https://your-avatar-url.com",
-        "driver_url": "bank://lively"
-    }
-    response = requests.post(DID_URL, headers=headers, json=payload)
-    return response.json()
+        "script": {"type": "text", "input": ai_response}
+        "source_url": "https://myhost.com/image.jpg",
+        "driver_url": "bank://lively/driver-05",  // See Drivers List Tab above for more supported drivers
+    
+}
+
+    try:
+        response = requests.post(DID_URL, headers=headers, json=payload)
+        avatar_data = response.json()
+        return {"result_url": avatar_data.get("result_url", "No Video")}
+    except Exception as e:
+        print(f"❌ D-ID API Error: {e}")
+        return {"error": "Avatar generation failed"}
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """ WebSocket endpoint for real-time emotion and avatar video streaming. """
     await websocket.accept()
-    while True:
-        try:
+    try:
+        while True:
             emotion = "neutral"
             pitch = 0.0
             energy = 0.0
+
             avatar_response = await generate_avatar(emotion)
             await websocket.send_json({
                 "emotion": emotion,
@@ -114,23 +155,36 @@ async def websocket_endpoint(websocket: WebSocket):
                 "energy": energy,
                 "avatar_video_url": avatar_response.get("result_url", "No Video")
             })
+
             await asyncio.sleep(0.5)
-        except Exception as e:
-            print(f"WebSocket error: {e}")
-            break 
+
+    except WebSocketDisconnect:
+        print("❌ WebSocket Disconnected")
+    except Exception as e:
+        print(f"❌ WebSocket Error: {e}")
+    finally:
+        await websocket.close()
+
 
 @app.get("/analyze")
 async def analyze_emotion():
+    """ Captures a single frame and analyzes emotion using DeepFace. """
     cap = cv2.VideoCapture(0)
     ret, frame = cap.read()
     cap.release()
+
     if not ret:
         return {"error": "Could not capture frame"}
-    result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
-    return {"emotion": result[0]["dominant_emotion"]} if result else {"emotion": "unknown"}
+
+    try:
+        result = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
+        return {"emotion": result[0]["dominant_emotion"]} if result else {"emotion": "unknown"}
+    except Exception as e:
+        print(f"❌ DeepFace Error: {e}")
+        return {"emotion": "unknown"}
+
 
 @app.get("/")
 async def root():
+    """ Root endpoint for API status check. """
     return {"message": "AI Psychiatrist API is running!"}
-
-
